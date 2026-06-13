@@ -8,6 +8,7 @@ subject lines. Caps per-repo contribution so no single repo dominates.
 import json
 import re
 import subprocess
+import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -181,19 +182,25 @@ def scoped_diff(repo: Path, commit_hash: str, files: list[str]) -> str:
     return git(repo, "show", "--stat", "-p", "--format=", commit_hash, "--", *files)
 
 
-def extract_from_repo(repo: Path, target: int):
+def diff_fingerprint(diff: str) -> str:
+    # Strip line numbers and file paths, keep only +/- lines
+    lines = [
+        l
+        for l in diff.splitlines()
+        if l.startswith(("+", "-")) and not l.startswith(("+++", "---"))
+    ]
+    normalized = "\n".join(lines).lower().strip()
+    return hashlib.md5(normalized.encode()).hexdigest()
+
+
+def extract_from_repo(repo: Path, target: int, global_seen: set[tuple[str, str]]):
     examples = []
-    seen_subjects = set()
     for commit_hash, author, subject in list_commits(repo, CLONE_DEPTH):
         if len(examples) >= target:
             break
         if is_bot_author(author):
             continue
         if is_bad_subject(subject):
-            continue
-        # de-dup near-identical subjects within a repo (catches release-bot style)
-        key = subject.lower().strip()
-        if key in seen_subjects:
             continue
 
         files = changed_files(repo, commit_hash)
@@ -204,6 +211,12 @@ def extract_from_repo(repo: Path, target: int):
             continue
 
         diff = scoped_diff(repo, commit_hash, real_files)
+
+        # de-dup identical commits within a repo
+        key = (subject.lower().strip(), diff_fingerprint(diff))
+        if key in global_seen:
+            continue
+
         line_count = diff.count("\n")
         if line_count < MIN_DIFF_LINES or line_count > MAX_DIFF_LINES:
             continue
@@ -214,7 +227,7 @@ def extract_from_repo(repo: Path, target: int):
         if is_bad_subject(clean_subject):
             continue
 
-        seen_subjects.add(key)
+        global_seen.add(key)
         examples.append(
             {
                 "messages": [
@@ -260,9 +273,10 @@ def main():
 
     all_examples = []
     per_repo_counts = {}
+    global_seen: set[tuple[str, str]] = set()
     for repo in sorted(p for p in REPOS_DIR.iterdir() if p.is_dir()):
         print(f"=> {repo.name}")
-        examples = extract_from_repo(repo, PER_REPO_TARGET)
+        examples = extract_from_repo(repo, PER_REPO_TARGET, global_seen)
         per_repo_counts[repo.name] = len(examples)
         print(f"   kept {len(examples)} examples")
         all_examples.extend(examples)
