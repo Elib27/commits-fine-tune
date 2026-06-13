@@ -31,6 +31,7 @@ PER_REPO_TARGET = 2000
 CLONE_DEPTH = 15000
 MIN_DIFF_LINES = 6
 MAX_DIFF_LINES = 300
+MAX_CHANGED_FILES = 6
 MAX_DIFF_CHARS = 15_000  # guards against few-but-very-long-line diffs
 MIN_SUBJECT_LEN = 15
 MAX_SUBJECT_LEN = 150
@@ -198,6 +199,8 @@ def extract_from_repo(repo: Path, target: int):
         files = changed_files(repo, commit_hash)
         real_files = [f for f in files if not is_generated_path(f)]
         if not real_files:
+            continue
+        if len(real_files) > MAX_CHANGED_FILES:
             continue
 
         diff = scoped_diff(repo, commit_hash, real_files)
