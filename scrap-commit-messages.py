@@ -9,36 +9,38 @@ import json
 import re
 import subprocess
 import hashlib
+import random
 from pathlib import Path
+from collections import Counter
 
 ROOT = Path(__file__).parent
 REPOS_DIR = ROOT / "repos"
-OUTPUT_FILE = ROOT / "commits.jsonl"
+OUTPUT_FILE = ROOT / "datasets" / "commits.jsonl"
 
 # Source repos to mine, keyed by their local directory name under repos/.
 REPOS = {
     "angular": "https://github.com/angular/angular.git",
     "botpress": "https://github.com/botpress/botpress.git",
+    "commitlint": "https://github.com/conventional-changelog/commitlint.git",
+    "cypress": "https://github.com/cypress-io/cypress.git",
+    "nestjs": "https://github.com/nestjs/nest.git",
+    "nuxt": "https://github.com/nuxt/nuxt.git",
+    "prisma": "https://github.com/prisma/prisma.git",
+    "supabase": "https://github.com/supabase/supabase.git",
+    "trpc": "https://github.com/trpc/trpc.git",
+    "twenty": "https://github.com/twentyhq/twenty.git",
+    "typeorm": "https://github.com/typeorm/typeorm.git",
+    "typescript-eslint": "https://github.com/typescript-eslint/typescript-eslint.git",
     "vite": "https://github.com/vitejs/vite.git",
     "vuejs-core": "https://github.com/vuejs/core.git",
-    "nuxt": "https://github.com/nuxt/nuxt.git",
-    "typescript-eslint": "https://github.com/typescript-eslint/typescript-eslint.git",
-    "typeorm": "https://github.com/typeorm/typeorm.git",
-    "supabase": "https://github.com/supabase/supabase.git",
-    "cypress": "https://github.com/cypress-io/cypress.git",
-    "trpc": "https://github.com/trpc/trpc.git",
-    "nestjs": "https://github.com/nestjs/nest.git",
-    "prisma": "https://github.com/prisma/prisma.git",
-    "commitlint": "https://github.com/conventional-changelog/commitlint.git",
-    "twenty": "https://github.com/twentyhq/twenty.git",
 }
 
-PER_REPO_TARGET = 2000
-CLONE_DEPTH = 15000
+PER_REPO_TARGET = 1000
+CLONE_DEPTH = 10000
 MIN_DIFF_LINES = 6
 MAX_DIFF_LINES = 300
 MAX_CHANGED_FILES = 6
-MAX_DIFF_CHARS = 15_000  # guards against few-but-very-long-line diffs
+MAX_DIFF_CHARS = 12_000  # guards against few-but-very-long-line diffs
 MIN_SUBJECT_LEN = 15
 MAX_SUBJECT_LEN = 150
 
@@ -277,35 +279,98 @@ def print_length_summary(label: str, values: list[int]) -> None:
     print("  " + "  ".join(f"p{p}={v}" for p, v in pct.items()))
 
 
-def main():
-    REPOS_DIR.mkdir(parents=True, exist_ok=True)
-    for name, url in REPOS.items():
-        ensure_repo(name, url)
+def type_distribution_check(dataset):
+    type_re = re.compile(r"^(\w+)[\(:]")
+    types = []
+    repos = []
+    for ex in dataset:
+        subject = ex["messages"][1]["content"]
+        repo = ex["meta"]["repo"]
+        m = type_re.match(subject)
+        if m:
+            types.append(m.group(1).lower())
+        repos.append(repo)
     print()
+    print("DISTRIBUTION")
+    print("type")
+    print(Counter(types).most_common())
+    print("Repo")
+    print(Counter(repos).most_common())
 
-    all_examples = []
-    per_repo_counts = {}
-    global_seen: set[tuple[str, str]] = set()
-    for repo in sorted(p for p in REPOS_DIR.iterdir() if p.is_dir()):
-        print(f"=> {repo.name}")
-        examples = extract_from_repo(repo, PER_REPO_TARGET, global_seen)
-        per_repo_counts[repo.name] = len(examples)
-        print(f"   kept {len(examples)} examples")
-        all_examples.extend(examples)
 
-    with OUTPUT_FILE.open("w") as f:
-        for ex in all_examples:
-            f.write(json.dumps(ex) + "\n")
+def sample_random_examples(dataset):
+    for ex in random.sample(dataset, 20):
+        print("DIFF:", ex["messages"][0]["content"][:300])
+        print("MSG: ", ex["messages"][1]["content"])
+        print("---")
 
+
+def dedup_check(dataset):
+    subjects = [ex["messages"][1]["content"].lower().strip() for ex in dataset]
+    print(f"Total: {len(subjects)}")
+    print(f"Unique subjects: {len(set(subjects))}")
+
+
+def scope_coverage(dataset):
+    extensions = Counter()
+    for ex in dataset:
+        diff = ex["messages"][0]["content"]
+        for match in re.finditer(r"diff --git a/\S+\.(\w+)", diff):
+            extensions[match.group(1)] += 1
+    print(extensions.most_common(20))
+
+
+def print_data_shape(dataset, per_repo_counts):
     print()
-    print(f"Total: {len(all_examples)} examples -> {OUTPUT_FILE}")
+    print(f"Total: {len(dataset)} examples -> {OUTPUT_FILE}")
     for name, count in per_repo_counts.items():
         print(f"  {name}: {count}")
-
-    msg_lens = [len(ex["messages"][1]["content"]) for ex in all_examples]
-    diff_lens = [len(ex["messages"][0]["content"]) for ex in all_examples]
+    msg_lens = [len(ex["messages"][1]["content"]) for ex in dataset]
+    diff_lens = [len(ex["messages"][0]["content"]) for ex in dataset]
     print_length_summary("Commit message", msg_lens)
     print_length_summary("Diff prompt", diff_lens)
+
+    type_distribution_check(dataset)
+    # sample_random_examples(dataset)
+    dedup_check(dataset)
+    scope_coverage(dataset)
+    # add LLM-as-judge on sample
+
+
+def main():
+    # REPOS_DIR.mkdir(parents=True, exist_ok=True)
+    # for name, url in REPOS.items():
+    #     ensure_repo(name, url)
+    # print()
+    #
+    # all_examples = []
+    # per_repo_counts = {}
+    # global_seen: set[tuple[str, str]] = set()
+    # for repo in sorted(p for p in REPOS_DIR.iterdir() if p.is_dir()):
+    #     print(f"=> {repo.name}")
+    #     examples = extract_from_repo(repo, PER_REPO_TARGET, global_seen)
+    #     per_repo_counts[repo.name] = len(examples)
+    #     print(f"   kept {len(examples)} examples")
+    #     all_examples.extend(examples)
+    #
+    # with OUTPUT_FILE.open("w") as f:
+    #     for ex in all_examples:
+    #         f.write(json.dumps(ex) + "\n")
+
+    # Reload the existing dataset so we can inspect it without re-mining.
+    all_examples = []
+    per_repo_counts = {}
+    with OUTPUT_FILE.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            ex = json.loads(line)
+            all_examples.append(ex)
+            repo = ex["meta"]["repo"]
+            per_repo_counts[repo] = per_repo_counts.get(repo, 0) + 1
+
+    print_data_shape(all_examples, per_repo_counts)
 
 
 if __name__ == "__main__":
