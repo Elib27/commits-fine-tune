@@ -26,6 +26,11 @@ REPOS = {
     "typeorm": "https://github.com/typeorm/typeorm.git",
     "supabase": "https://github.com/supabase/supabase.git",
     "cypress": "https://github.com/cypress-io/cypress.git",
+    "trpc": "https://github.com/trpc/trpc.git",
+    "nestjs": "https://github.com/nestjs/nest.git",
+    "prisma": "https://github.com/prisma/prisma.git",
+    "commitlint": "https://github.com/conventional-changelog/commitlint.git",
+    "twenty": "https://github.com/twentyhq/twenty.git",
 }
 
 PER_REPO_TARGET = 2000
@@ -43,7 +48,7 @@ TRAILING_REF_RE = re.compile(r"\s*[\(\[](?:#|GH-)\d+[\)\]]\s*$")
 
 # Require Conventional Commits format: "type(scope)?!: subject".
 CONVENTIONAL_RE = re.compile(
-    r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
+    r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)"
     r"(\([^)]+\))?!?: ",
     re.IGNORECASE,
 )
@@ -58,6 +63,10 @@ BOT_AUTHOR_PATTERNS = [
         r"github-actions",
         r"snyk-bot",
         r"semantic-release",
+        r"codegen",
+        r"auto-?merge",
+        r"nx-bot",
+        r"allcontributors",
     ]
 ]
 
@@ -65,7 +74,7 @@ BAD_SUBJECT_PATTERNS = [
     re.compile(p, re.IGNORECASE)
     for p in [
         r"^bump\b",
-        r"^chore\(deps\)",
+        r"^chore\(release\)",
         r"^merge\b",
         r"^revert\b",
         r"^release\b",
@@ -73,7 +82,7 @@ BAD_SUBJECT_PATTERNS = [
         r"^update (the )?(readme|changelog|deps|dependencies|version)",
         r"^typo\b",
         r"^wip\b",
-        r"^fix(\s|\:)*(typo|lint|format)?\s*$",
+        r"^fix\s*:\s*$",
         r"^\.+$",
         r"^\s*$",
     ]
@@ -100,6 +109,10 @@ GENERATED_FILE_PATTERNS = [
         r"\.pb\.go$",
         r"_pb2\.py$",
         r"\.snap$",
+        r"\.d\.ts$",
+        r"(^|/)coverage/",
+        r"__generated__",
+        r"\.graphql\.ts$",
     ]
 ]
 
@@ -212,17 +225,16 @@ def extract_from_repo(repo: Path, target: int, global_seen: set[tuple[str, str]]
 
         diff = scoped_diff(repo, commit_hash, real_files)
 
-        # de-dup identical commits within a repo
-        key = (subject.lower().strip(), diff_fingerprint(diff))
-        if key in global_seen:
-            continue
-
         line_count = diff.count("\n")
         if line_count < MIN_DIFF_LINES or line_count > MAX_DIFF_LINES:
             continue
         if len(diff) > MAX_DIFF_CHARS:
             continue
 
+        # de-dup identical commits within a repo
+        key = (subject.lower().strip(), diff_fingerprint(diff))
+        if key in global_seen:
+            continue
         clean_subject = TRAILING_REF_RE.sub("", subject).strip()
         if is_bad_subject(clean_subject):
             continue
