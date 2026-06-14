@@ -43,6 +43,7 @@ MAX_CHANGED_FILES = 6
 MAX_DIFF_CHARS = 12_000  # guards against few-but-very-long-line diffs
 MIN_SUBJECT_LEN = 15
 MAX_SUBJECT_LEN = 150
+MAX_SUBJECT_OCCURRENCES = 5
 
 # Strip trailing PR/issue refs that aren't knowable from a diff.
 # Examples: " (#1234)", " (GH-12)", " [#9876]"
@@ -208,7 +209,12 @@ def diff_fingerprint(diff: str) -> str:
     return hashlib.md5(normalized.encode()).hexdigest()
 
 
-def extract_from_repo(repo: Path, target: int, global_seen: set[tuple[str, str]]):
+def extract_from_repo(
+    repo: Path,
+    target: int,
+    global_seen: set[tuple[str, str]],
+    subject_global_counts: Counter,
+):
     examples = []
     for commit_hash, author, subject in list_commits(repo, CLONE_DEPTH):
         if len(examples) >= target:
@@ -233,10 +239,15 @@ def extract_from_repo(repo: Path, target: int, global_seen: set[tuple[str, str]]
         if len(diff) > MAX_DIFF_CHARS:
             continue
 
-        # de-dup identical commits within a repo
+        # de-dup commits
         key = (subject.lower().strip(), diff_fingerprint(diff))
         if key in global_seen:
             continue
+        subject_key = subject.lower().strip()
+        if subject_global_counts[subject_key] >= MAX_SUBJECT_OCCURRENCES:
+            continue
+        subject_global_counts[subject_key] += 1
+
         clean_subject = TRAILING_REF_RE.sub("", subject).strip()
         if is_bad_subject(clean_subject):
             continue
@@ -334,7 +345,6 @@ def print_data_shape(dataset, per_repo_counts):
     # sample_random_examples(dataset)
     dedup_check(dataset)
     scope_coverage(dataset)
-    # add LLM-as-judge on sample
 
 
 def main():
@@ -346,9 +356,12 @@ def main():
     all_examples = []
     per_repo_counts = {}
     global_seen: set[tuple[str, str]] = set()
+    subject_global_counts: Counter = Counter()
     for repo in sorted(p for p in REPOS_DIR.iterdir() if p.is_dir()):
         print(f"=> {repo.name}")
-        examples = extract_from_repo(repo, PER_REPO_TARGET, global_seen)
+        examples = extract_from_repo(
+            repo, PER_REPO_TARGET, global_seen, subject_global_counts
+        )
         per_repo_counts[repo.name] = len(examples)
         print(f"   kept {len(examples)} examples")
         all_examples.extend(examples)
