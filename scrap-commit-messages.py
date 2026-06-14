@@ -44,6 +44,7 @@ MAX_DIFF_CHARS = 12_000  # guards against few-but-very-long-line diffs
 MIN_SUBJECT_LEN = 15
 MAX_SUBJECT_LEN = 150
 MAX_SUBJECT_OCCURRENCES = 5
+RANDOM_SEED = 42  # fixed seed so the shuffled subject-cap selection is reproducible
 
 # Strip trailing PR/issue refs that aren't knowable from a diff.
 # Examples: " (#1234)", " (GH-12)", " [#9876]"
@@ -209,15 +210,16 @@ def diff_fingerprint(diff: str) -> str:
     return hashlib.md5(normalized.encode()).hexdigest()
 
 
-def extract_from_repo(
-    repo: Path,
-    target: int,
-    global_seen: set[tuple[str, str]],
-    subject_global_counts: Counter,
-):
-    examples = []
+def gather_candidates(repo: Path, target: int):
+    """Return filtered candidate examples for a repo (no cross-repo dedup yet).
+
+    Cross-repo concerns (identical-commit dedup and the global subject cap) are
+    applied later in main() against the shuffled pool, so the capped slots for a
+    shared subject aren't all claimed by whichever repo is processed first.
+    """
+    candidates = []
     for commit_hash, author, subject in list_commits(repo, CLONE_DEPTH):
-        if len(examples) >= target:
+        if len(candidates) >= target:
             break
         if is_bot_author(author):
             continue
@@ -239,39 +241,33 @@ def extract_from_repo(
         if len(diff) > MAX_DIFF_CHARS:
             continue
 
-        # de-dup commits
-        key = (subject.lower().strip(), diff_fingerprint(diff))
-        if key in global_seen:
-            continue
-        subject_key = subject.lower().strip()
-        if subject_global_counts[subject_key] >= MAX_SUBJECT_OCCURRENCES:
-            continue
-        subject_global_counts[subject_key] += 1
-
         clean_subject = TRAILING_REF_RE.sub("", subject).strip()
         if is_bad_subject(clean_subject):
             continue
 
-        global_seen.add(key)
-        examples.append(
+        candidates.append(
             {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": (
-                            "Generate a commit message for this diff:\n\n"
-                            f"```diff\n{diff}\n```"
-                        ),
+                "subject_key": subject.lower().strip(),
+                "fingerprint": diff_fingerprint(diff),
+                "example": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Generate a commit message for this diff:\n\n"
+                                f"```diff\n{diff}\n```"
+                            ),
+                        },
+                        {"role": "assistant", "content": clean_subject},
+                    ],
+                    "meta": {
+                        "repo": repo.name,
+                        "hash": commit_hash,
                     },
-                    {"role": "assistant", "content": clean_subject},
-                ],
-                "meta": {
-                    "repo": repo.name,
-                    "hash": commit_hash,
                 },
             }
         )
-    return examples
+    return candidates
 
 
 def percentiles(values: list[int], ps=(50, 75, 90, 95, 99)) -> dict[int, int]:
@@ -353,18 +349,32 @@ def main():
         ensure_repo(name, url)
     print()
 
-    all_examples = []
-    per_repo_counts = {}
-    global_seen: set[tuple[str, str]] = set()
-    subject_global_counts: Counter = Counter()
+    candidates = []
     for repo in sorted(p for p in REPOS_DIR.iterdir() if p.is_dir()):
         print(f"=> {repo.name}")
-        examples = extract_from_repo(
-            repo, PER_REPO_TARGET, global_seen, subject_global_counts
-        )
-        per_repo_counts[repo.name] = len(examples)
-        print(f"   kept {len(examples)} examples")
-        all_examples.extend(examples)
+        repo_candidates = gather_candidates(repo, PER_REPO_TARGET)
+        print(f"   gathered {len(repo_candidates)} candidates")
+        candidates.extend(repo_candidates)
+
+    # Shuffle the pooled candidates so the global subject cap is filled fairly
+    # across repos instead of being claimed by whichever repo is processed first.
+    random.seed(RANDOM_SEED)
+    random.shuffle(candidates)
+
+    all_examples = []
+    per_repo_counts: Counter = Counter()
+    global_seen: set[tuple[str, str]] = set()
+    subject_global_counts: Counter = Counter()
+    for cand in candidates:
+        key = (cand["subject_key"], cand["fingerprint"])
+        if key in global_seen:
+            continue
+        if subject_global_counts[cand["subject_key"]] >= MAX_SUBJECT_OCCURRENCES:
+            continue
+        global_seen.add(key)
+        subject_global_counts[cand["subject_key"]] += 1
+        all_examples.append(cand["example"])
+        per_repo_counts[cand["example"]["meta"]["repo"]] += 1
 
     with OUTPUT_FILE.open("w") as f:
         for ex in all_examples:
