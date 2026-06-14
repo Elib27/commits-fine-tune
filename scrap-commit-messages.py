@@ -15,7 +15,7 @@ from collections import Counter
 
 ROOT = Path(__file__).parent
 REPOS_DIR = ROOT / "repos"
-OUTPUT_FILE = ROOT / "datasets" / "commits_v2.jsonl"
+OUTPUT_FILE = ROOT / "datasets" / "commits_v3.jsonl"
 
 # Source repos to mine, keyed by their local directory name under repos/.
 REPOS = {
