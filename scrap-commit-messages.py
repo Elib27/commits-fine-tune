@@ -36,7 +36,7 @@ REPOS = {
 }
 
 PER_REPO_TARGET = 1000
-CLONE_DEPTH = 10000
+CLONE_DEPTH = 8000
 MIN_DIFF_LINES = 6
 MAX_DIFF_LINES = 300
 MAX_CHANGED_FILES = 6
@@ -189,9 +189,23 @@ def list_commits(repo: Path, n: int):
             yield parts[0], parts[1], parts[2]
 
 
-def changed_files(repo: Path, commit_hash: str):
-    out = git(repo, "show", "--name-only", "--format=", commit_hash)
-    return [f for f in out.splitlines() if f]
+DIFF_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")
+
+
+def full_diff(repo: Path, commit_hash: str) -> str:
+    """Whole-commit diff with stat, sans the commit header (one git call)."""
+    return git(repo, "show", "--stat", "-p", "--format=", commit_hash)
+
+
+def files_in_diff(diff: str) -> list[str]:
+    """Extract changed file paths from a diff's 'diff --git' headers."""
+    files = []
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            m = DIFF_HEADER_RE.match(line)
+            if m:
+                files.append(m.group(2))
+    return files
 
 
 def scoped_diff(repo: Path, commit_hash: str, files: list[str]) -> str:
@@ -226,14 +240,18 @@ def gather_candidates(repo: Path, target: int):
         if is_bad_subject(subject):
             continue
 
-        files = changed_files(repo, commit_hash)
+        # One git call for the whole commit; derive the file list from the diff.
+        diff = full_diff(repo, commit_hash)
+        files = files_in_diff(diff)
         real_files = [f for f in files if not is_generated_path(f)]
         if not real_files:
             continue
         if len(real_files) > MAX_CHANGED_FILES:
             continue
-
-        diff = scoped_diff(repo, commit_hash, real_files)
+        # Only re-fetch (scoped to real files) when the commit also touched
+        # generated files; otherwise the full diff already is the scoped diff.
+        if len(real_files) != len(files):
+            diff = scoped_diff(repo, commit_hash, real_files)
 
         line_count = diff.count("\n")
         if line_count < MIN_DIFF_LINES or line_count > MAX_DIFF_LINES:
