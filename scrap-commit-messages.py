@@ -23,15 +23,15 @@ REPOS = {
     "botpress": "https://github.com/botpress/botpress.git",
     "commitlint": "https://github.com/conventional-changelog/commitlint.git",
     "cypress": "https://github.com/cypress-io/cypress.git",
-    "nestjs": "https://github.com/nestjs/nest.git",
     "nuxt": "https://github.com/nuxt/nuxt.git",
     "prisma": "https://github.com/prisma/prisma.git",
-    "supabase": "https://github.com/supabase/supabase.git",
+    "tanstack-query": "https://github.com/TanStack/query.git",
     "trpc": "https://github.com/trpc/trpc.git",
     "twenty": "https://github.com/twentyhq/twenty.git",
     "typeorm": "https://github.com/typeorm/typeorm.git",
     "typescript-eslint": "https://github.com/typescript-eslint/typescript-eslint.git",
     "vite": "https://github.com/vitejs/vite.git",
+    "vitest": "https://github.com/vitest-dev/vitest.git",
     "vuejs-core": "https://github.com/vuejs/core.git",
 }
 
@@ -338,37 +338,37 @@ def print_data_shape(dataset, per_repo_counts):
 
 
 def main():
-    # REPOS_DIR.mkdir(parents=True, exist_ok=True)
-    # for name, url in REPOS.items():
-    #     ensure_repo(name, url)
-    # print()
-    #
-    # all_examples = []
-    # per_repo_counts = {}
-    # global_seen: set[tuple[str, str]] = set()
-    # for repo in sorted(p for p in REPOS_DIR.iterdir() if p.is_dir()):
-    #     print(f"=> {repo.name}")
-    #     examples = extract_from_repo(repo, PER_REPO_TARGET, global_seen)
-    #     per_repo_counts[repo.name] = len(examples)
-    #     print(f"   kept {len(examples)} examples")
-    #     all_examples.extend(examples)
-    #
-    # with OUTPUT_FILE.open("w") as f:
-    #     for ex in all_examples:
-    #         f.write(json.dumps(ex) + "\n")
+    REPOS_DIR.mkdir(parents=True, exist_ok=True)
+    for name, url in REPOS.items():
+        ensure_repo(name, url)
+    print()
 
-    # Reload the existing dataset so we can inspect it without re-mining.
     all_examples = []
     per_repo_counts = {}
-    with OUTPUT_FILE.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            ex = json.loads(line)
-            all_examples.append(ex)
-            repo = ex["meta"]["repo"]
-            per_repo_counts[repo] = per_repo_counts.get(repo, 0) + 1
+    global_seen: set[tuple[str, str]] = set()
+    for repo in sorted(p for p in REPOS_DIR.iterdir() if p.is_dir()):
+        print(f"=> {repo.name}")
+        examples = extract_from_repo(repo, PER_REPO_TARGET, global_seen)
+        per_repo_counts[repo.name] = len(examples)
+        print(f"   kept {len(examples)} examples")
+        all_examples.extend(examples)
+
+    with OUTPUT_FILE.open("w") as f:
+        for ex in all_examples:
+            f.write(json.dumps(ex) + "\n")
+
+    # Reload the existing dataset so we can inspect it without re-mining.
+    # all_examples = []
+    # per_repo_counts = {}
+    # with OUTPUT_FILE.open() as f:
+    #     for line in f:
+    #         line = line.strip()
+    #         if not line:
+    #             continue
+    #         ex = json.loads(line)
+    #         all_examples.append(ex)
+    #         repo = ex["meta"]["repo"]
+    #         per_repo_counts[repo] = per_repo_counts.get(repo, 0) + 1
 
     print_data_shape(all_examples, per_repo_counts)
 
