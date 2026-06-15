@@ -22,7 +22,6 @@ REPOS = {
     "angular": "https://github.com/angular/angular.git",
     "botpress": "https://github.com/botpress/botpress.git",
     "commitlint": "https://github.com/conventional-changelog/commitlint.git",
-    "cypress": "https://github.com/cypress-io/cypress.git",
     "nuxt": "https://github.com/nuxt/nuxt.git",
     "prisma": "https://github.com/prisma/prisma.git",
     "tanstack-query": "https://github.com/TanStack/query.git",
@@ -265,7 +264,7 @@ def gather_candidates(repo: Path, target: int):
 
         candidates.append(
             {
-                "subject_key": subject.lower().strip(),
+                "subject_key": clean_subject.lower().strip(),
                 "fingerprint": diff_fingerprint(diff),
                 "example": {
                     "messages": [
