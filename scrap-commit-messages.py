@@ -270,10 +270,7 @@ def gather_candidates(repo: Path, target: int):
                     "messages": [
                         {
                             "role": "user",
-                            "content": (
-                                "Generate a commit message for this diff:\n\n"
-                                f"```diff\n{diff}\n```"
-                            ),
+                            "content": diff,
                         },
                         {"role": "assistant", "content": clean_subject},
                     ],
