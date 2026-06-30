@@ -1,6 +1,6 @@
 """Extract (diff, commit message) pairs from local git clones for LLM fine-tuning.
 
-Designed for repos that follow Conventional Commits (angular, vite, vue, botpress).
+Designed for ~a dozen repos that follow Conventional Commits (see REPOS).
 Filters out bot commits, lockfile-only diffs, oversized diffs, and low-quality
 subject lines. Caps per-repo contribution so no single repo dominates.
 """
@@ -12,6 +12,7 @@ import hashlib
 import random
 from pathlib import Path
 from collections import Counter
+from collections.abc import Iterator
 
 ROOT = Path(__file__).parent
 REPOS_DIR = ROOT / "repos"
@@ -55,6 +56,9 @@ CONVENTIONAL_RE = re.compile(
     r"(\([^)]+\))?!?: ",
     re.IGNORECASE,
 )
+
+# Parse the file paths out of a "diff --git a/<old> b/<new>" header line.
+DIFF_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 
 BOT_AUTHOR_PATTERNS = [
     re.compile(p, re.IGNORECASE)
@@ -146,6 +150,8 @@ def is_generated_path(path: str) -> bool:
 
 
 def git(repo: Path, *args: str) -> str:
+    # Read-only git helper: a failed command yields "", which downstream code
+    # intentionally treats as "no commits / empty diff" and skips.
     return subprocess.run(
         ["git", *args],
         cwd=repo,
@@ -173,7 +179,7 @@ def ensure_repo(name: str, url: str) -> None:
         run_git("reset", "--hard", f"origin/{branch}", cwd=dest)
 
 
-def list_commits(repo: Path, n: int):
+def list_commits(repo: Path, n: int) -> Iterator[tuple[str, str, str]]:
     """Yield (hash, author, subject) for the last n non-merge commits."""
     raw = git(
         repo,
@@ -186,9 +192,6 @@ def list_commits(repo: Path, n: int):
         parts = line.split("\t", 2)
         if len(parts) == 3:
             yield parts[0], parts[1], parts[2]
-
-
-DIFF_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 
 
 def full_diff(repo: Path, commit_hash: str) -> str:
@@ -215,15 +218,15 @@ def scoped_diff(repo: Path, commit_hash: str, files: list[str]) -> str:
 def diff_fingerprint(diff: str) -> str:
     # Strip line numbers and file paths, keep only +/- lines
     lines = [
-        l
-        for l in diff.splitlines()
-        if l.startswith(("+", "-")) and not l.startswith(("+++", "---"))
+        line
+        for line in diff.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
     ]
     normalized = "\n".join(lines).lower().strip()
     return hashlib.md5(normalized.encode()).hexdigest()
 
 
-def gather_candidates(repo: Path, target: int):
+def gather_candidates(repo: Path, target: int) -> list[dict]:
     """Return filtered candidate examples for a repo (no cross-repo dedup yet).
 
     Cross-repo concerns (identical-commit dedup and the global subject cap) are
@@ -264,7 +267,7 @@ def gather_candidates(repo: Path, target: int):
 
         candidates.append(
             {
-                "subject_key": clean_subject.lower().strip(),
+                "subject_key": clean_subject.lower(),
                 "fingerprint": diff_fingerprint(diff),
                 "example": {
                     "messages": [
@@ -300,7 +303,10 @@ def print_length_summary(label: str, values: list[int]) -> None:
     print("  " + "  ".join(f"p{p}={v}" for p, v in pct.items()))
 
 
-def type_distribution_check(dataset):
+# --- dataset inspection: read-only reporting over the built dataset ---
+
+
+def report_type_distribution(dataset: list[dict]) -> None:
     type_re = re.compile(r"^(\w+)[\(:]")
     types = []
     repos = []
@@ -319,21 +325,21 @@ def type_distribution_check(dataset):
     print(Counter(repos).most_common())
 
 
-def sample_random_examples(dataset):
+def sample_random_examples(dataset: list[dict]) -> None:
     for ex in random.sample(dataset, 20):
         print("DIFF:", ex["messages"][0]["content"][:300])
         print("MSG: ", ex["messages"][1]["content"])
         print("---")
 
 
-def dedup_check(dataset):
+def report_uniqueness(dataset: list[dict]) -> None:
     subjects = [ex["messages"][1]["content"].lower().strip() for ex in dataset]
     print(f"Total: {len(subjects)}")
     print(f"Unique subjects: {len(set(subjects))}")
 
 
-def scope_coverage(dataset):
-    extensions = Counter()
+def report_file_extensions(dataset: list[dict]) -> None:
+    extensions: Counter = Counter()
     for ex in dataset:
         diff = ex["messages"][0]["content"]
         for match in re.finditer(r"diff --git a/\S+\.(\w+)", diff):
@@ -341,7 +347,7 @@ def scope_coverage(dataset):
     print(extensions.most_common(20))
 
 
-def print_data_shape(dataset, per_repo_counts):
+def print_data_shape(dataset: list[dict], per_repo_counts) -> None:
     print()
     print(f"Total: {len(dataset)} examples -> {OUTPUT_FILE}")
     for name, count in per_repo_counts.items():
@@ -351,10 +357,10 @@ def print_data_shape(dataset, per_repo_counts):
     print_length_summary("Commit message", msg_lens)
     print_length_summary("Diff prompt", diff_lens)
 
-    type_distribution_check(dataset)
+    report_type_distribution(dataset)
     # sample_random_examples(dataset)
-    dedup_check(dataset)
-    scope_coverage(dataset)
+    report_uniqueness(dataset)
+    report_file_extensions(dataset)
 
 
 def main():
